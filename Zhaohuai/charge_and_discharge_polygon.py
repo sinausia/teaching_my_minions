@@ -28,7 +28,8 @@ import os
 from typing import Dict, List, Tuple, Optional
 
 # Define output directory
-output_dir = "/Users/danielsinausia/Downloads/PCA_exp_fit_results"
+output_dir = "/Users/danielsinausia/Documents/Experiments/charge_discharge_08"
+os.makedirs(output_dir, exist_ok=True)
 
 def load_and_analyze_data(csv_path: str) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
     """Load CSV data and extract the required values for pentagon plot"""
@@ -325,8 +326,11 @@ def main():
     # CONFIGURE YOUR CSV FILES AND LABELS HERE
     # Format: (file_path, label_for_legend)
     csv_files_with_labels = [
-        ("/Users/danielsinausia/Downloads/PCA_exp_fit_results/exponential_terms_analysis.csv", "Dataset 1"),
-        ("/Users/danielsinausia/Downloads/PCA_exp_fit_results/exponential_terms_analysis.csv", "Dataset 2")
+        ("/Users/danielsinausia/Documents/Experiments/DS_00152/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "Li"),
+        ("/Users/danielsinausia/Documents/Experiments/DS_00145/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "Na"),
+
+        ("/Users/danielsinausia/Documents/Experiments/DS_00139/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "K"),
+        ("/Users/danielsinausia/Documents/Experiments/DS_00163/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "Cs")
         # Add more files here like:
         # ("/path/to/second_file.csv", "Dataset 2"),
         # ("/path/to/third_file.csv", "Dataset 3"),
