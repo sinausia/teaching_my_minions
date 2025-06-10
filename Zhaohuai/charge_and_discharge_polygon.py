@@ -28,7 +28,9 @@ import os
 from typing import Dict, List, Tuple, Optional
 
 # Define output directory
-output_dir = "/Users/danielsinausia/Documents/Experiments/charge_discharge_08"
+output_dir = "/Users/danielsinausia/Documents/Experiments/charge_discharge_07"
+
+# Create output directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)
 
 def load_and_analyze_data(csv_path: str) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
@@ -114,28 +116,52 @@ def load_and_analyze_data(csv_path: str) -> Tuple[Optional[Dict], Optional[pd.Da
 def create_multi_pentagon_plot(datasets: Dict[str, Dict], output_path: str):
     """Create a pentagon radar plot with multiple overlaid datasets"""
     
+    # Ensure the output directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir:  # Only create if there's a directory component
+        os.makedirs(output_dir, exist_ok=True)
+    
     # Pentagon corner labels
     labels = [
         "Average Exponential Term (high overpotential",
         "Average Exponential Term (low overpotential", 
-        "Abs Max Exp Term High Overpotential - Abs Max Exp Term Low Overpotential)/\nAbs Max Exp Term Overall",
-        "Difference Intensity Peak 3360 Max High - MLow Overpotential",
-        "Ratio between difference of exponential terms \n(last - first high overpotential) and the intensities \n of peak at 3360 (last - first high overpotential)"
+        "Abs Max Exp Term \n High Overpotential - Abs Max Exp Term Low \n Overpotential)/\nAbs Max Exp Term Overall",
+        "Difference Intensity \n Peak 3360 Max High - MLow Overpotential",
+        "Ratio between difference of \n exponential terms \n(last - first high overpotential) and the \n intensities \n of peak at 3360 \n (last - first high overpotential)"
     ]
     
     # Colors for different datasets
     colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
     
-    # Calculate global scaling
-    all_values = []
+    # Calculate corner-wise normalization
+    # First, collect all values for each corner across all datasets
+    corner_values_by_position = [[] for _ in range(5)]  # 5 corners
+    
     for data in datasets.values():
         corner_values = [
             data['corner_1'], data['corner_2'], data['corner_3'],
             data['corner_4'], data['corner_5']
         ]
-        all_values.extend([abs(val) for val in corner_values])
+        for i, val in enumerate(corner_values):
+            corner_values_by_position[i].append(val)
     
-    max_abs_val = max(all_values) if all_values else 1.0
+    # Calculate min and max for each corner position
+    corner_mins = []
+    corner_maxs = []
+    corner_ranges = []
+    
+    for corner_vals in corner_values_by_position:
+        min_val = min(corner_vals)
+        max_val = max(corner_vals)
+        corner_mins.append(min_val)
+        corner_maxs.append(max_val)
+        # Avoid division by zero
+        range_val = max_val - min_val if max_val != min_val else 1.0
+        corner_ranges.append(range_val)
+    
+    print("\nNormalization ranges for each corner:")
+    for i, (min_val, max_val, range_val) in enumerate(zip(corner_mins, corner_maxs, corner_ranges)):
+        print(f"Corner {i+1}: min={min_val:.6f}, max={max_val:.6f}, range={range_val:.6f}")
     
     # Number of variables
     N = len(labels)
@@ -175,16 +201,18 @@ def create_multi_pentagon_plot(datasets: Dict[str, Dict], output_path: str):
             values['corner_4'], values['corner_5']
         ]
         
-        # Convert to absolute values and normalize
-        abs_values = [abs(val) for val in corner_values]
-        
-        # Scale values to a reasonable range (0.1 to 1.0 for visibility)
+        # Normalize each corner independently to range [0.1, 1.0]
         normalized_values = []
-        for val in abs_values:
-            if val == 0:
-                normalized_values.append(0.1)  # Minimum visible value
-            else:
-                normalized_values.append(0.1 + 0.9 * (val / max_abs_val))
+        for i, val in enumerate(corner_values):
+            # Min-max normalization for each corner
+            normalized = (val - corner_mins[i]) / corner_ranges[i]
+            # Scale to [0.1, 1.0] for visibility
+            scaled = 0.1 + 0.9 * normalized
+            normalized_values.append(scaled)
+        
+        print(f"\nDataset '{label}' normalized values:")
+        for i, (orig, norm) in enumerate(zip(corner_values, normalized_values)):
+            print(f"  Corner {i+1}: {orig:.6f} -> {norm:.3f}")
         
         # Calculate data points
         data_x = [normalized_values[i] * np.cos(angles[i]) for i in range(N)]
@@ -216,21 +244,23 @@ def create_multi_pentagon_plot(datasets: Dict[str, Dict], output_path: str):
     ax.set_aspect('equal')
     
     # Add concentric pentagon labels showing scale
-    if max_abs_val > 0:
-        for i, level in enumerate([0.2, 0.4, 0.6, 0.8, 1.0]):
-            # Convert normalized value back to original scale
-            if level <= 0.1:
-                original_val = 0
-            else:
-                original_val = ((level - 0.1) / 0.9) * max_abs_val
-            
-            # Place scale labels along one of the radial lines
-            scale_x = level * np.cos(angles[0]) * 0.7  # Slightly inside to avoid overlap
-            scale_y = level * np.sin(angles[0]) * 0.7
-            
-            ax.text(scale_x, scale_y, f'{original_val:.3f}', 
-                   fontsize=8, ha='center', va='center',
-                   bbox=dict(boxstyle='round,pad=0.1', facecolor='lightyellow', alpha=0.7))
+    for i, level in enumerate([0.2, 0.4, 0.6, 0.8, 1.0]):
+        # Calculate pentagon vertices for this level
+        pentagon_x = [level * np.cos(angle) for angle in angles]
+        pentagon_y = [level * np.sin(angle) for angle in angles]
+        pentagon_x.append(pentagon_x[0])  # Close the pentagon
+        pentagon_y.append(pentagon_y[0])
+        
+        # Place scale labels along one of the radial lines
+        scale_x = level * np.cos(angles[0]) * 0.7  # Slightly inside to avoid overlap
+        scale_y = level * np.sin(angles[0]) * 0.7
+        
+        # Convert normalized level back to percentage of range
+        percentage = ((level - 0.1) / 0.9) * 100 if level > 0.1 else 0
+        
+        ax.text(scale_x, scale_y, f'{percentage:.0f}%', 
+               fontsize=8, ha='center', va='center',
+               bbox=dict(boxstyle='round,pad=0.1', facecolor='lightyellow', alpha=0.7))
     
     # Remove axes
     ax.set_xticks([])
@@ -249,7 +279,7 @@ def create_multi_pentagon_plot(datasets: Dict[str, Dict], output_path: str):
               frameon=True, fancybox=True, shadow=True)
     
     # Add scaling info
-    legend_text = f"Values scaled for visibility\nOriginal range: 0 to {max_abs_val:.4f}\nAll negative values shown as absolute values"
+    legend_text = "Corner-wise normalized values (0-100%)\nEach corner independently scaled to show relative differences\nbetween datasets for that specific metric"
     plt.figtext(0.02, 0.02, legend_text, fontsize=10, 
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='lightyellow', alpha=0.8))
     
@@ -296,18 +326,64 @@ def analyze_multiple_csvs(csv_files_with_labels: List[Tuple[str, str]]) -> Dict[
 def save_combined_results(datasets: Dict[str, Dict], output_path: str):
     """Save detailed results for all datasets to text file"""
     
+    # Ensure the output directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    
+    # Calculate normalization ranges (same logic as in plotting function)
+    corner_values_by_position = [[] for _ in range(5)]
+    
+    for data in datasets.values():
+        corner_values = [
+            data['corner_1'], data['corner_2'], data['corner_3'],
+            data['corner_4'], data['corner_5']
+        ]
+        for i, val in enumerate(corner_values):
+            corner_values_by_position[i].append(val)
+    
+    corner_mins = [min(vals) for vals in corner_values_by_position]
+    corner_maxs = [max(vals) for vals in corner_values_by_position]
+    corner_ranges = [max_val - min_val if max_val != min_val else 1.0 
+                     for min_val, max_val in zip(corner_mins, corner_maxs)]
+    
     with open(output_path, 'w') as f:
         f.write("MULTI-DATASET PENTAGON ANALYSIS RESULTS\n")
         f.write("=" * 60 + "\n\n")
         
+        f.write("NORMALIZATION RANGES:\n")
+        f.write("-" * 40 + "\n")
+        corner_names = [
+            "Corner 1 (Avg Even Exp Term)",
+            "Corner 2 (Avg Odd Exp Term)", 
+            "Corner 3 (Exp Term Ratio)",
+            "Corner 4 (Max Mean 3360 Diff)",
+            "Corner 5 (Segment Ratio)"
+        ]
+        for i, (name, min_val, max_val, range_val) in enumerate(zip(corner_names, corner_mins, corner_maxs, corner_ranges)):
+            f.write(f"{name}: min={min_val:.6f}, max={max_val:.6f}, range={range_val:.6f}\n")
+        f.write("\n")
+        
         for label, results in datasets.items():
             f.write(f"DATASET: {label}\n")
             f.write("-" * 40 + "\n")
+            
+            # Original values
+            f.write("ORIGINAL VALUES:\n")
             f.write(f"Average Exponential Term (high overpotential): {results['corner_1']:.6f}\n")
             f.write(f"Average Exponential Term (low overpotential): {results['corner_2']:.6f}\n")
             f.write(f"(Abs Max Exp Term High Overpotential - Abs Max Exp Term Low Overpotential)/Abs Max Exp Term Overall: {results['corner_3']:.6f}\n")
             f.write(f"Difference Intensity Peak 3360 Max High - MLow Overpotential: {results['corner_4']:.6f}\n")
-            f.write(f"Ratio between difference of exponential terms (last - first high overpotential) and the intensities of peak at 3360 (last - first high overpotential)): {results['corner_5']:.6f}\n\n")
+            f.write(f"Ratio between difference of exponential terms (last - first high overpotential) and the intensities of peak at 3360 (last - first high overpotential)): {results['corner_5']:.6f}\n")
+            
+            # Normalized values
+            f.write("\nNORMALIZED VALUES (0-100%):\n")
+            corner_values = [results['corner_1'], results['corner_2'], results['corner_3'], results['corner_4'], results['corner_5']]
+            for i, (name, val, min_val, range_val) in enumerate(zip(corner_names, corner_values, corner_mins, corner_ranges)):
+                normalized = (val - min_val) / range_val
+                percentage = normalized * 100
+                f.write(f"{name}: {percentage:.1f}%\n")
+            f.write("\n")
         
         f.write("CALCULATION DETAILS:\n")
         f.write("-" * 40 + "\n")
@@ -315,7 +391,13 @@ def save_combined_results(datasets: Dict[str, Dict], output_path: str):
         f.write("Corner 2: Average of Regular_Multi_Segment_Exponential_Term for odd segments\n")
         f.write("Corner 3: (abs(max_even) - abs(max_odd))/abs(overall_max) for exponential terms\n")
         f.write("Corner 4: (Highest Max_Abs_Mean_3360 for even) - (Highest Max_Abs_Mean_3360 for odd)\n")
-        f.write("Corner 5: (Segment 10 - Segment 2 exponential term) / (Segment 10 - Segment 2 Mean 3360)\n")
+        f.write("Corner 5: (Segment 10 - Segment 2 exponential term) / (Segment 10 - Segment 2 Mean 3360)\n\n")
+        f.write("NORMALIZATION METHOD:\n")
+        f.write("-" * 40 + "\n")
+        f.write("Each corner is independently normalized using min-max scaling:\n")
+        f.write("normalized_value = (original_value - min_value_for_corner) / (max_value_for_corner - min_value_for_corner)\n")
+        f.write("This ensures that differences between datasets are visible for each metric,\n")
+        f.write("regardless of the original scale of that metric.\n")
 
 def main():
     """Main function to run the multi-dataset pentagon analysis"""
@@ -326,20 +408,11 @@ def main():
     # CONFIGURE YOUR CSV FILES AND LABELS HERE
     # Format: (file_path, label_for_legend)
     csv_files_with_labels = [
-        ("/Users/danielsinausia/Documents/Experiments/DS_00152/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "Li"),
-        ("/Users/danielsinausia/Documents/Experiments/DS_00145/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "Na"),
-
-        ("/Users/danielsinausia/Documents/Experiments/DS_00139/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "K"),
-        ("/Users/danielsinausia/Documents/Experiments/DS_00163/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "Cs")
-        # Add more files here like:
-        # ("/path/to/second_file.csv", "Dataset 2"),
-        # ("/path/to/third_file.csv", "Dataset 3"),
+        ("/Users/danielsinausia/Documents/Experiments/DS_00180/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "Li"),
+        ("/Users/danielsinausia/Documents/Experiments/DS_00144/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "Na"),
+        ("/Users/danielsinausia/Documents/Experiments/DS_00138/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "K"),
+        ("/Users/danielsinausia/Documents/Experiments/DS_00127/Reconstruction_based_on_CO_peak_in_eigenspectra/charge_discharge/exponential_terms_analysis.csv", "Cs")
     ]
-    
-    # You can also add files programmatically:
-    # csv_files_with_labels.extend([
-    #     ("/path/to/another_file.csv", "Another Dataset"),
-    # ])
     
     if len(csv_files_with_labels) == 0:
         print("No CSV files configured. Please add file paths and labels to the csv_files_with_labels list.")
