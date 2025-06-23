@@ -58,28 +58,22 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
         # Estimate offset as minimum value
         c_guess = np.min(y_clean)
         
-        # Estimate amplitude - force positive
-        a_guess = abs(y_start - c_guess)
-        if a_guess < 1e-10:
-            a_guess = abs(np.max(y_clean) - c_guess)
-        if a_guess < 1e-10:
-            a_guess = np.std(y_clean)
-        if a_guess < 1e-10:
-            a_guess = 1.0
+        # Estimate amplitude
+        a_guess = y_start - c_guess
+        if abs(a_guess) < 1e-10:
+            a_guess = np.max(y_clean) - c_guess
         
-        # Try multiple initial guesses - all with positive a
+        # Try multiple initial guesses - be more aggressive
         initial_guesses = [
             [a_guess, b_guess, c_guess],
-            [abs(y_start), -0.1, np.mean(y_clean)],  # Positive a with decay
-            [abs(y_start), 0.1, np.mean(y_clean)],   # Positive a with growth
-            [abs(y_start - y_end), -0.1, y_end],     # Positive amplitude
-            [abs(y_start - y_end), 0.1, y_start],    # Positive amplitude, growth
-            [np.max(y_clean) - np.min(y_clean), -0.05, np.min(y_clean)],  # Range as amplitude
-            [np.max(y_clean) - np.min(y_clean), 0.05, np.min(y_clean)],   # Range as amplitude, growth
-            [np.std(y_clean), -0.001, np.mean(y_clean)],  # Std as amplitude
-            [np.std(y_clean), 0.001, np.mean(y_clean)],   # Std as amplitude, growth
-            [1.0, -0.01, np.mean(y_clean)],   # Conservative positive amplitude
-            [1.0, 0.01, np.mean(y_clean)],    # Conservative positive amplitude, growth
+            [y_start, -0.1, 0.0],  # Original guess
+            [y_start, 0.1, 0.0],   # Growth instead of decay
+            [y_start, -0.001, 0.0],  # Very slow decay
+            [y_start, 0.001, 0.0],   # Very slow growth
+            [np.max(y_clean), -0.05, np.min(y_clean)],  # Conservative decay
+            [y_start - y_end, -0.2, y_end],  # Strong decay to end value
+            [1.0, -0.001, np.mean(y_clean)],  # Tiny exponential around mean
+            [np.std(y_clean), -0.0001, np.mean(y_clean)],  # Ultra-conservative
         ]
         
         best_result = None
@@ -87,10 +81,10 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
         
         for p0 in initial_guesses:
             try:
-                # Enforce positive a constraint
+                # More relaxed bounds to allow tiny b values
                 bounds = (
-                    [0.0, -50, -np.inf],     # Lower bounds (a >= 0, allow negative/positive b, c can be anything)
-                    [np.inf, 50, np.inf]     # Upper bounds (a can be large, b bounded, c can be anything)
+                    [-np.inf, -50, -np.inf],  # Lower bounds (allow more extreme decay)
+                    [np.inf, 50, np.inf]      # Upper bounds (allow more extreme growth)
                 )
                 
                 popt, pcov = curve_fit(
@@ -124,8 +118,8 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
             try:
                 # Last resort: fit a nearly-flat exponential
                 mean_y = np.mean(y_clean)
-                # Force fit with positive a and b very close to zero
-                popt = [1.0, 1e-10, mean_y]  # Positive a, essentially y = a + c (constant)
+                # Force fit with b very close to zero
+                popt = [0.0, 1e-10, mean_y]  # Essentially y = c (constant)
                 
                 # Create fake covariance matrix
                 pcov = np.eye(3) * 1e-6
@@ -144,8 +138,8 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
                 best_result = (popt, pcov, r_squared)
                 
             except:
-                # Absolute last resort - force positive a
-                popt = [1.0, 0.0, np.mean(y_clean) if len(y_clean) > 0 else 0.0]
+                # Absolute last resort
+                popt = [0.0, 0.0, np.mean(y_clean) if len(y_clean) > 0 else 0.0]
                 pcov = None
                 r_squared = 0.0
                 best_result = (popt, pcov, r_squared)
@@ -217,14 +211,14 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
                     'Pulse_Number': pulse_number,
                     'Pulse_Type': pulse_type,
                     'Fit_Type': fit_type,
-                    'Parameter_a': 1.0,
+                    'Parameter_a': 0.0,
                     'Parameter_b': 0.0,
                     'Parameter_c': mean_val,
                     'Parameter_a_Error': np.nan,
                     'Parameter_b_Error': np.nan,
                     'Parameter_c_Error': np.nan,
                     'R_Squared': 1.0 if np.std(y_pulse[np.isfinite(y_pulse)]) < 1e-10 else 0.0,
-                    'Equation': f"1.0 * exp(0.0 * x) + {mean_val:.6f}",
+                    'Equation': f"0.0 * exp(0.0 * x) + {mean_val:.6f}",
                     'Data_Points': len(y_pulse),
                     'Original_Data_Points': len(y_pulse),
                     'Start_Index': x_pulse[0] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
@@ -233,7 +227,7 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
                     'Fit_Warnings': f'Forced constant fit due to error: {str(e)}',
                     'x_data': x_pulse if 'x_pulse' in locals() else np.array([]),
                     'y_data': y_pulse if 'y_pulse' in locals() else np.array([]),
-                    'fit_params': [1.0, 0.0, mean_val]
+                    'fit_params': [0.0, 0.0, mean_val]
                 }
         except:
             pass
@@ -244,14 +238,14 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
             'Pulse_Number': pulse_number,
             'Pulse_Type': pulse_type,
             'Fit_Type': fit_type,
-            'Parameter_a': 1.0,
+            'Parameter_a': 0.0,
             'Parameter_b': 0.0,
             'Parameter_c': 0.0,
             'Parameter_a_Error': np.nan,
             'Parameter_b_Error': np.nan,
             'Parameter_c_Error': np.nan,
             'R_Squared': 0.0,
-            'Equation': '1.0 * exp(0.0 * x) + 0.0',
+            'Equation': '0.0 * exp(0.0 * x) + 0.0',
             'Data_Points': len(y_pulse) if 'y_pulse' in locals() else 0,
             'Original_Data_Points': len(y_pulse) if 'y_pulse' in locals() else 0,
             'Start_Index': x_pulse[0] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
@@ -260,7 +254,7 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
             'Fit_Warnings': f'Emergency fallback fit: {str(e)}',
             'x_data': np.array([]),
             'y_data': np.array([]),
-            'fit_params': [1.0, 0.0, 0.0]
+            'fit_params': [0.0, 0.0, 0.0]
         }
 
 def plot_pulse_comparison(full_result, first9_result, plot_dir):
