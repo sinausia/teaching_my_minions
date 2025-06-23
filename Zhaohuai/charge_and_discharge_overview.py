@@ -4,6 +4,8 @@ import pandas as pd
 from scipy.optimize import curve_fit
 import warnings
 from pathlib import Path
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 
 # Suppress RuntimeWarning for better output readability
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -190,7 +192,11 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id):
             'Start_Index': x_pulse[0] if len(x_pulse) > 0 else np.nan,
             'End_Index': x_pulse[-1] if len(x_pulse) > 0 else np.nan,
             'Fit_Success': True,
-            'Fit_Warnings': '; '.join(fit_warnings) if fit_warnings else 'None'
+            'Fit_Warnings': '; '.join(fit_warnings) if fit_warnings else 'None',
+            # Store data for plotting
+            'x_data': x_clean,
+            'y_data': y_clean,
+            'fit_params': popt
         }
         
     except Exception as e:
@@ -216,7 +222,10 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id):
                     'Start_Index': x_pulse[0] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
                     'End_Index': x_pulse[-1] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
                     'Fit_Success': True,
-                    'Fit_Warnings': f'Forced constant fit due to error: {str(e)}'
+                    'Fit_Warnings': f'Forced constant fit due to error: {str(e)}',
+                    'x_data': x_pulse if 'x_pulse' in locals() else np.array([]),
+                    'y_data': y_pulse if 'y_pulse' in locals() else np.array([]),
+                    'fit_params': [0.0, 0.0, mean_val]
                 }
         except:
             pass
@@ -237,10 +246,229 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id):
             'Data_Points': len(y_pulse) if 'y_pulse' in locals() else 0,
             'Original_Data_Points': len(y_pulse) if 'y_pulse' in locals() else 0,
             'Start_Index': x_pulse[0] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
-            'End_Index': x_pulse[-1] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
+            'End_Index': x_pulse[-1] if 'x_pulse' in locals and len(x_pulse) > 0 else np.nan,
             'Fit_Success': True,
-            'Fit_Warnings': f'Emergency fallback fit: {str(e)}'
+            'Fit_Warnings': f'Emergency fallback fit: {str(e)}',
+            'x_data': np.array([]),
+            'y_data': np.array([]),
+            'fit_params': [0.0, 0.0, 0.0]
         }
+
+def plot_individual_pulse(result, plot_dir):
+    """
+    Create a plot for an individual pulse fit
+    """
+    try:
+        x_data = result['x_data']
+        y_data = result['y_data']
+        fit_params = result['fit_params']
+        
+        if len(x_data) == 0 or len(y_data) == 0:
+            return
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Plot original data
+        ax.scatter(x_data, y_data, alpha=0.7, color='blue', s=20, label='Data')
+        
+        # Plot fitted curve
+        x_fit = np.linspace(x_data.min(), x_data.max(), 200)
+        y_fit = exp_func(x_fit, *fit_params)
+        ax.plot(x_fit, y_fit, 'r-', linewidth=2, label='Exponential Fit')
+        
+        # Add labels and title
+        ax.set_xlabel('Time Index')
+        ax.set_ylabel('Signal Value')
+        ax.set_title(f"{result['Experiment_ID']} - Pulse {result['Pulse_Number']} ({result['Pulse_Type']})\n"
+                    f"R² = {result['R_Squared']:.4f}, b = {result['Parameter_b']:.6f}")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Add equation text
+        equation_text = f"y = {result['Parameter_a']:.4f} × exp({result['Parameter_b']:.6f} × x) + {result['Parameter_c']:.4f}"
+        ax.text(0.02, 0.98, equation_text, transform=ax.transAxes, 
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        # Save plot
+        filename = f"{result['Experiment_ID']}_Pulse_{result['Pulse_Number']:02d}_{result['Pulse_Type']}.png"
+        filepath = plot_dir / filename
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+    except Exception as e:
+        print(f"Error plotting pulse {result['Experiment_ID']} - {result['Pulse_Number']}: {e}")
+        plt.close()
+
+def plot_experiment_summary(experiment_results, plot_dir):
+    """
+    Create a summary plot for all pulses in an experiment
+    """
+    try:
+        experiment_id = experiment_results[0]['Experiment_ID']
+        
+        # Separate odd and even pulses
+        odd_pulses = [r for r in experiment_results if r['Pulse_Type'] == 'Odd']
+        even_pulses = [r for r in experiment_results if r['Pulse_Type'] == 'Even']
+        
+        # Create subplot layout
+        n_pulses = len(experiment_results)
+        n_cols = min(4, n_pulses)
+        n_rows = (n_pulses + n_cols - 1) // n_cols
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 3*n_rows))
+        if n_pulses == 1:
+            axes = [axes]
+        elif n_rows == 1:
+            axes = [axes]
+        else:
+            axes = axes.flatten()
+        
+        for i, result in enumerate(experiment_results):
+            if i >= len(axes):
+                break
+                
+            ax = axes[i]
+            x_data = result['x_data']
+            y_data = result['y_data']
+            fit_params = result['fit_params']
+            
+            if len(x_data) == 0 or len(y_data) == 0:
+                ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(f"Pulse {result['Pulse_Number']} ({result['Pulse_Type']})")
+                continue
+            
+            # Plot data and fit
+            color = 'red' if result['Pulse_Type'] == 'Odd' else 'blue'
+            ax.scatter(x_data, y_data, alpha=0.6, color=color, s=10)
+            
+            x_fit = np.linspace(x_data.min(), x_data.max(), 100)
+            y_fit = exp_func(x_fit, *fit_params)
+            ax.plot(x_fit, y_fit, 'k-', linewidth=1.5)
+            
+            ax.set_title(f"P{result['Pulse_Number']} ({result['Pulse_Type']})\nR²={result['R_Squared']:.3f}")
+            ax.grid(True, alpha=0.3)
+            
+            # Remove labels for cleaner look
+            if i // n_cols == n_rows - 1:  # Bottom row
+                ax.set_xlabel('Time')
+            if i % n_cols == 0:  # Left column
+                ax.set_ylabel('Signal')
+        
+        # Hide unused subplots
+        for i in range(len(experiment_results), len(axes)):
+            axes[i].set_visible(False)
+        
+        plt.suptitle(f'Experiment {experiment_id} - All Pulses Summary', fontsize=16)
+        plt.tight_layout()
+        
+        # Save plot
+        filename = f"{experiment_id}_All_Pulses_Summary.png"
+        filepath = plot_dir / filename
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+    except Exception as e:
+        print(f"Error creating summary plot for {experiment_id}: {e}")
+        plt.close()
+
+def plot_parameter_comparison(all_results, plot_dir):
+    """
+    Create comparison plots for parameters across experiments
+    """
+    try:
+        df = pd.DataFrame(all_results)
+        successful_fits = df[df['Fit_Success'] == True]
+        
+        if len(successful_fits) == 0:
+            return
+        
+        # Create figure with subplots
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        
+        # Plot 1: R-squared distribution
+        ax1 = axes[0, 0]
+        odd_r2 = successful_fits[successful_fits['Pulse_Type'] == 'Odd']['R_Squared']
+        even_r2 = successful_fits[successful_fits['Pulse_Type'] == 'Even']['R_Squared']
+        
+        ax1.hist(odd_r2, alpha=0.7, label='Odd Pulses', color='red', bins=20)
+        ax1.hist(even_r2, alpha=0.7, label='Even Pulses', color='blue', bins=20)
+        ax1.set_xlabel('R-squared')
+        ax1.set_ylabel('Frequency')
+        ax1.set_title('Distribution of R-squared Values')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Parameter b distribution
+        ax2 = axes[0, 1]
+        odd_b = successful_fits[successful_fits['Pulse_Type'] == 'Odd']['Parameter_b']
+        even_b = successful_fits[successful_fits['Pulse_Type'] == 'Even']['Parameter_b']
+        
+        ax2.hist(odd_b, alpha=0.7, label='Odd Pulses', color='red', bins=20)
+        ax2.hist(even_b, alpha=0.7, label='Even Pulses', color='blue', bins=20)
+        ax2.set_xlabel('Parameter b (decay/growth rate)')
+        ax2.set_ylabel('Frequency')
+        ax2.set_title('Distribution of Parameter b Values')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: R-squared vs Parameter b
+        ax3 = axes[1, 0]
+        odd_data = successful_fits[successful_fits['Pulse_Type'] == 'Odd']
+        even_data = successful_fits[successful_fits['Pulse_Type'] == 'Even']
+        
+        ax3.scatter(odd_data['Parameter_b'], odd_data['R_Squared'], 
+                   alpha=0.6, color='red', label='Odd Pulses', s=20)
+        ax3.scatter(even_data['Parameter_b'], even_data['R_Squared'], 
+                   alpha=0.6, color='blue', label='Even Pulses', s=20)
+        ax3.set_xlabel('Parameter b')
+        ax3.set_ylabel('R-squared')
+        ax3.set_title('Fit Quality vs Decay/Growth Rate')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        
+        # Plot 4: Average parameter b by experiment
+        ax4 = axes[1, 1]
+        experiment_stats = []
+        for exp_id in successful_fits['Experiment_ID'].unique():
+            exp_data = successful_fits[successful_fits['Experiment_ID'] == exp_id]
+            odd_exp = exp_data[exp_data['Pulse_Type'] == 'Odd']
+            even_exp = exp_data[exp_data['Pulse_Type'] == 'Even']
+            
+            experiment_stats.append({
+                'Experiment': exp_id,
+                'Odd_Avg_b': odd_exp['Parameter_b'].mean() if len(odd_exp) > 0 else np.nan,
+                'Even_Avg_b': even_exp['Parameter_b'].mean() if len(even_exp) > 0 else np.nan
+            })
+        
+        exp_df = pd.DataFrame(experiment_stats)
+        x_pos = np.arange(len(exp_df))
+        
+        width = 0.35
+        ax4.bar(x_pos - width/2, exp_df['Odd_Avg_b'], width, 
+               label='Odd Pulses', color='red', alpha=0.7)
+        ax4.bar(x_pos + width/2, exp_df['Even_Avg_b'], width, 
+               label='Even Pulses', color='blue', alpha=0.7)
+        
+        ax4.set_xlabel('Experiment')
+        ax4.set_ylabel('Average Parameter b')
+        ax4.set_title('Average Decay/Growth Rate by Experiment')
+        ax4.set_xticks(x_pos)
+        ax4.set_xticklabels(exp_df['Experiment'], rotation=45)
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        # Save plot
+        filename = "Parameter_Comparison_Summary.png"
+        filepath = plot_dir / filename
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+    except Exception as e:
+        print(f"Error creating parameter comparison plot: {e}")
+        plt.close()
+
 def get_experiment_identifier(file_path):
     """
     Extract a unique identifier from the file path.
@@ -313,8 +541,7 @@ def load_data_file(file_path):
                 print(f"Error: Could not load data from {file_path}")
                 return None, None
 
-
-def process_single_file(file_path, pulse_length=91):
+def process_single_file(file_path, pulse_length=91, plot_dir=None, create_plots=True):
     """
     Process a single file and return list of fit results for all pulses
     """
@@ -358,6 +585,21 @@ def process_single_file(file_path, pulse_length=91):
         
         print(f"  Pulse {pulse_num + 1} ({pulse_type}): R² = {result['R_Squared']:.4f}")
     
+    # Create plots if requested
+    if create_plots and plot_dir is not None:
+        # Individual pulse plots
+        individual_plot_dir = plot_dir / "individual_pulses"
+        individual_plot_dir.mkdir(exist_ok=True)
+        
+        for result in results:
+            plot_individual_pulse(result, individual_plot_dir)
+        
+        # Experiment summary plot
+        experiment_plot_dir = plot_dir / "experiment_summaries"
+        experiment_plot_dir.mkdir(exist_ok=True)
+        
+        plot_experiment_summary(results, experiment_plot_dir)
+    
     return results
 
 # ===================================================================
@@ -397,8 +639,15 @@ INPUT_FILES = [
 # Output Excel file path
 OUTPUT_FILE = "/Users/danielsinausia/Downloads/pulse_exponential_fits_results.xlsx"
 
+# Output plots directory
+PLOTS_DIR = "/Users/danielsinausia/Downloads/pulse_fitting_plots"
+
 # Pulse length (number of data points per pulse)
 PULSE_LENGTH = 91
+
+# Plot settings
+CREATE_PLOTS = True  # Set to False to disable plotting
+PLOT_DPI = 300      # Resolution for saved plots
 
 # ===================================================================
 # END CONFIGURATION SECTION
@@ -412,7 +661,17 @@ def process_files_with_config():
     print(f"Input files: {len(INPUT_FILES)}")
     print(f"Output file: {OUTPUT_FILE}")
     print(f"Pulse length: {PULSE_LENGTH} points")
+    print(f"Create plots: {CREATE_PLOTS}")
+    if CREATE_PLOTS:
+        print(f"Plots directory: {PLOTS_DIR}")
     print("-" * 50)
+    
+    # Create plots directory if plotting is enabled
+    plot_dir = None
+    if CREATE_PLOTS:
+        plot_dir = Path(PLOTS_DIR)
+        plot_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Created plots directory: {plot_dir}")
     
     # Process all files
     all_results = []
@@ -429,15 +688,27 @@ def process_files_with_config():
             continue
         
         # Process this file
-        file_results = process_single_file(file_path, PULSE_LENGTH)
+        file_results = process_single_file(file_path, PULSE_LENGTH, plot_dir, CREATE_PLOTS)
         all_results.extend(file_results)
     
     if not all_results:
         print("No data was processed successfully!")
         return
     
+    # Create overall comparison plots
+    if CREATE_PLOTS and plot_dir is not None:
+        print("Creating parameter comparison plots...")
+        plot_parameter_comparison(all_results, plot_dir)
+    
+    # Remove plotting data from results before saving to Excel
+    results_for_excel = []
+    for result in all_results:
+        excel_result = {k: v for k, v in result.items() 
+                       if k not in ['x_data', 'y_data', 'fit_params']}
+        results_for_excel.append(excel_result)
+    
     # Create DataFrame
-    df = pd.DataFrame(all_results)
+    df = pd.DataFrame(results_for_excel)
     
     # Sort by experiment ID, then pulse number
     df = df.sort_values(['Experiment_ID', 'Pulse_Number'])
@@ -534,6 +805,12 @@ def process_files_with_config():
     print(f"Processed {len(df)} total pulses from {len(df['Experiment_ID'].unique())} experiments")
     print(f"Successful fits: {len(successful_fits)}/{len(df)} ({len(successful_fits)/len(df)*100:.1f}%)")
     print(f"Results saved to: {output_path}")
+    
+    if CREATE_PLOTS:
+        print(f"\nPlots saved to:")
+        print(f"  Individual pulses: {plot_dir / 'individual_pulses'}")
+        print(f"  Experiment summaries: {plot_dir / 'experiment_summaries'}")
+        print(f"  Parameter comparisons: {plot_dir / 'Parameter_Comparison_Summary.png'}")
     
     # Print summary by pulse type
     if len(successful_fits) > 0:
