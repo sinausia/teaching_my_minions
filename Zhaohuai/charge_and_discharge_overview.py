@@ -14,7 +14,7 @@ def exp_func(x, a, b, c):
     """Single exponential function: y = a * exp(b * x) + c"""
     return a * np.exp(b * x) + c
 
-def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id):
+def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, fit_type="full"):
     """
     Improved fit function with better initial guesses and error handling
     """
@@ -179,6 +179,7 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id):
             'Experiment_ID': experiment_id,
             'Pulse_Number': pulse_number,
             'Pulse_Type': pulse_type,
+            'Fit_Type': fit_type,
             'Parameter_a': a,
             'Parameter_b': b,
             'Parameter_c': c,
@@ -209,6 +210,7 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id):
                     'Experiment_ID': experiment_id,
                     'Pulse_Number': pulse_number,
                     'Pulse_Type': pulse_type,
+                    'Fit_Type': fit_type,
                     'Parameter_a': 0.0,
                     'Parameter_b': 0.0,
                     'Parameter_c': mean_val,
@@ -235,6 +237,7 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id):
             'Experiment_ID': experiment_id,
             'Pulse_Number': pulse_number,
             'Pulse_Type': pulse_type,
+            'Fit_Type': fit_type,
             'Parameter_a': 0.0,
             'Parameter_b': 0.0,
             'Parameter_c': 0.0,
@@ -246,13 +249,238 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id):
             'Data_Points': len(y_pulse) if 'y_pulse' in locals() else 0,
             'Original_Data_Points': len(y_pulse) if 'y_pulse' in locals() else 0,
             'Start_Index': x_pulse[0] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
-            'End_Index': x_pulse[-1] if 'x_pulse' in locals and len(x_pulse) > 0 else np.nan,
+            'End_Index': x_pulse[-1] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
             'Fit_Success': True,
             'Fit_Warnings': f'Emergency fallback fit: {str(e)}',
             'x_data': np.array([]),
             'y_data': np.array([]),
             'fit_params': [0.0, 0.0, 0.0]
         }
+
+def plot_pulse_comparison(full_result, first9_result, plot_dir):
+    """
+    Create a comparison plot showing full pulse vs first 9 points fits
+    """
+    try:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Full pulse plot
+        x_full = full_result['x_data']
+        y_full = full_result['y_data']
+        fit_params_full = full_result['fit_params']
+        
+        if len(x_full) > 0 and len(y_full) > 0:
+            ax1.scatter(x_full, y_full, alpha=0.7, color='blue', s=20, label='Data')
+            x_fit_full = np.linspace(x_full.min(), x_full.max(), 200)
+            y_fit_full = exp_func(x_fit_full, *fit_params_full)
+            ax1.plot(x_fit_full, y_fit_full, 'r-', linewidth=2, label='Full Pulse Fit')
+            
+            # Highlight first 9 points
+            if len(x_full) >= 9:
+                ax1.scatter(x_full[:9], y_full[:9], alpha=0.9, color='orange', s=30, 
+                           label='First 9 Points', edgecolors='black', linewidth=1)
+        
+        ax1.set_xlabel('Time Index')
+        ax1.set_ylabel('Signal Value')
+        ax1.set_title(f"{full_result['Experiment_ID']} - Pulse {full_result['Pulse_Number']} ({full_result['Pulse_Type']})\n"
+                     f"Full Pulse: R² = {full_result['R_Squared']:.4f}, b = {full_result['Parameter_b']:.6f}")
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # First 9 points plot
+        x_first9 = first9_result['x_data']
+        y_first9 = first9_result['y_data']
+        fit_params_first9 = first9_result['fit_params']
+        
+        if len(x_first9) > 0 and len(y_first9) > 0:
+            ax2.scatter(x_first9, y_first9, alpha=0.9, color='orange', s=30, 
+                       label='First 9 Points', edgecolors='black', linewidth=1)
+            x_fit_first9 = np.linspace(x_first9.min(), x_first9.max(), 100)
+            y_fit_first9 = exp_func(x_fit_first9, *fit_params_first9)
+            ax2.plot(x_fit_first9, y_fit_first9, 'g-', linewidth=2, label='First 9 Points Fit')
+        
+        ax2.set_xlabel('Time Index')
+        ax2.set_ylabel('Signal Value')
+        ax2.set_title(f"First 9 Points Only\n"
+                     f"R² = {first9_result['R_Squared']:.4f}, b = {first9_result['Parameter_b']:.6f}")
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Add equation text
+        full_eq = f"Full: y = {full_result['Parameter_a']:.4f} × exp({full_result['Parameter_b']:.6f} × x) + {full_result['Parameter_c']:.4f}"
+        first9_eq = f"First9: y = {first9_result['Parameter_a']:.4f} × exp({first9_result['Parameter_b']:.6f} × x) + {first9_result['Parameter_c']:.4f}"
+        
+        fig.text(0.02, 0.02, full_eq, fontsize=10, 
+                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        fig.text(0.02, 0.08, first9_eq, fontsize=10, 
+                bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
+        
+        plt.tight_layout()
+        
+        # Save plot
+        filename = f"{full_result['Experiment_ID']}_Pulse_{full_result['Pulse_Number']:02d}_{full_result['Pulse_Type']}_Comparison.png"
+        filepath = plot_dir / filename
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+    except Exception as e:
+        print(f"Error plotting comparison for pulse {full_result['Experiment_ID']} - {full_result['Pulse_Number']}: {e}")
+        plt.close()
+
+def plot_parameter_comparison_extended(all_results, plot_dir):
+    """
+    Enhanced comparison plots including first 9 points analysis
+    """
+    try:
+        df = pd.DataFrame(all_results)
+        successful_fits = df[df['Fit_Success'] == True]
+        
+        if len(successful_fits) == 0:
+            return
+        
+        # Separate full and first9 fits
+        full_fits = successful_fits[successful_fits['Fit_Type'] == 'full']
+        first9_fits = successful_fits[successful_fits['Fit_Type'] == 'first9']
+        
+        # Create figure with subplots
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        
+        # Plot 1: R-squared comparison (Full vs First9)
+        ax1 = axes[0, 0]
+        for pulse_type, color in [('Odd', 'red'), ('Even', 'blue')]:
+            full_type = full_fits[full_fits['Pulse_Type'] == pulse_type]['R_Squared']
+            first9_type = first9_fits[first9_fits['Pulse_Type'] == pulse_type]['R_Squared']
+            
+            ax1.scatter(full_type, first9_type, alpha=0.6, color=color, 
+                       label=f'{pulse_type} Pulses', s=20)
+        
+        # Add diagonal line
+        max_r2 = max(full_fits['R_Squared'].max(), first9_fits['R_Squared'].max())
+        ax1.plot([0, max_r2], [0, max_r2], 'k--', alpha=0.5, label='Equal R²')
+        ax1.set_xlabel('Full Pulse R²')
+        ax1.set_ylabel('First 9 Points R²')
+        ax1.set_title('R² Comparison: Full vs First 9 Points')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Parameter b comparison (Full vs First9)
+        ax2 = axes[0, 1]
+        for pulse_type, color in [('Odd', 'red'), ('Even', 'blue')]:
+            full_type = full_fits[full_fits['Pulse_Type'] == pulse_type]['Parameter_b']
+            first9_type = first9_fits[first9_fits['Pulse_Type'] == pulse_type]['Parameter_b']
+            
+            ax2.scatter(full_type, first9_type, alpha=0.6, color=color, 
+                       label=f'{pulse_type} Pulses', s=20)
+        
+        # Add diagonal line
+        b_range = [min(full_fits['Parameter_b'].min(), first9_fits['Parameter_b'].min()),
+                   max(full_fits['Parameter_b'].max(), first9_fits['Parameter_b'].max())]
+        ax2.plot(b_range, b_range, 'k--', alpha=0.5, label='Equal b')
+        ax2.set_xlabel('Full Pulse Parameter b')
+        ax2.set_ylabel('First 9 Points Parameter b')
+        ax2.set_title('Parameter b Comparison: Full vs First 9 Points')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: Distribution of parameter b differences
+        ax3 = axes[0, 2]
+        
+        # Calculate differences (first9 - full) for matching pulses
+        differences = []
+        for _, full_row in full_fits.iterrows():
+            matching_first9 = first9_fits[
+                (first9_fits['Experiment_ID'] == full_row['Experiment_ID']) &
+                (first9_fits['Pulse_Number'] == full_row['Pulse_Number'])
+            ]
+            if len(matching_first9) > 0:
+                diff = matching_first9.iloc[0]['Parameter_b'] - full_row['Parameter_b']
+                differences.append({
+                    'difference': diff,
+                    'pulse_type': full_row['Pulse_Type']
+                })
+        
+        diff_df = pd.DataFrame(differences)
+        if len(diff_df) > 0:
+            odd_diffs = diff_df[diff_df['pulse_type'] == 'Odd']['difference']
+            even_diffs = diff_df[diff_df['pulse_type'] == 'Even']['difference']
+            
+            ax3.hist(odd_diffs, alpha=0.7, label='Odd Pulses', color='red', bins=20)
+            ax3.hist(even_diffs, alpha=0.7, label='Even Pulses', color='blue', bins=20)
+            ax3.axvline(0, color='black', linestyle='--', alpha=0.5, label='No Difference')
+        
+        ax3.set_xlabel('Parameter b Difference (First9 - Full)')
+        ax3.set_ylabel('Frequency')
+        ax3.set_title('Distribution of Parameter b Differences')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        
+        # Plot 4: Full pulse parameter b by pulse type
+        ax4 = axes[1, 0]
+        full_odd = full_fits[full_fits['Pulse_Type'] == 'Odd']['Parameter_b']
+        full_even = full_fits[full_fits['Pulse_Type'] == 'Even']['Parameter_b']
+        
+        ax4.hist(full_odd, alpha=0.7, label='Odd Pulses', color='red', bins=20)
+        ax4.hist(full_even, alpha=0.7, label='Even Pulses', color='blue', bins=20)
+        ax4.set_xlabel('Parameter b (Full Pulse)')
+        ax4.set_ylabel('Frequency')
+        ax4.set_title('Full Pulse Parameter b Distribution')
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
+        
+        # Plot 5: First 9 points parameter b by pulse type
+        ax5 = axes[1, 1]
+        first9_odd = first9_fits[first9_fits['Pulse_Type'] == 'Odd']['Parameter_b']
+        first9_even = first9_fits[first9_fits['Pulse_Type'] == 'Even']['Parameter_b']
+        
+        ax5.hist(first9_odd, alpha=0.7, label='Odd Pulses', color='red', bins=20)
+        ax5.hist(first9_even, alpha=0.7, label='Even Pulses', color='blue', bins=20)
+        ax5.set_xlabel('Parameter b (First 9 Points)')
+        ax5.set_ylabel('Frequency')
+        ax5.set_title('First 9 Points Parameter b Distribution')
+        ax5.legend()
+        ax5.grid(True, alpha=0.3)
+        
+        # Plot 6: Average parameter b by experiment (comparison)
+        ax6 = axes[1, 2]
+        experiment_stats = []
+        for exp_id in full_fits['Experiment_ID'].unique():
+            full_exp = full_fits[full_fits['Experiment_ID'] == exp_id]
+            first9_exp = first9_fits[first9_fits['Experiment_ID'] == exp_id]
+            
+            experiment_stats.append({
+                'Experiment': exp_id,
+                'Full_Avg_b': full_exp['Parameter_b'].mean(),
+                'First9_Avg_b': first9_exp['Parameter_b'].mean() if len(first9_exp) > 0 else np.nan
+            })
+        
+        exp_df = pd.DataFrame(experiment_stats)
+        x_pos = np.arange(len(exp_df))
+        
+        width = 0.35
+        ax6.bar(x_pos - width/2, exp_df['Full_Avg_b'], width, 
+               label='Full Pulse', color='lightblue', alpha=0.7)
+        ax6.bar(x_pos + width/2, exp_df['First9_Avg_b'], width, 
+               label='First 9 Points', color='lightgreen', alpha=0.7)
+        
+        ax6.set_xlabel('Experiment')
+        ax6.set_ylabel('Average Parameter b')
+        ax6.set_title('Average Parameter b by Experiment')
+        ax6.set_xticks(x_pos)
+        ax6.set_xticklabels(exp_df['Experiment'], rotation=45)
+        ax6.legend()
+        ax6.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        # Save plot
+        filename = "Parameter_Comparison_Extended.png"
+        filepath = plot_dir / filename
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+    except Exception as e:
+        print(f"Error creating extended parameter comparison plot: {e}")
+        plt.close()
 
 def plot_individual_pulse(result, plot_dir):
     """
@@ -279,7 +507,7 @@ def plot_individual_pulse(result, plot_dir):
         # Add labels and title
         ax.set_xlabel('Time Index')
         ax.set_ylabel('Signal Value')
-        ax.set_title(f"{result['Experiment_ID']} - Pulse {result['Pulse_Number']} ({result['Pulse_Type']})\n"
+        ax.set_title(f"{result['Experiment_ID']} - Pulse {result['Pulse_Number']} ({result['Pulse_Type']}) - {result['Fit_Type']}\n"
                     f"R² = {result['R_Squared']:.4f}, b = {result['Parameter_b']:.6f}")
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -290,7 +518,7 @@ def plot_individual_pulse(result, plot_dir):
                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         
         # Save plot
-        filename = f"{result['Experiment_ID']}_Pulse_{result['Pulse_Number']:02d}_{result['Pulse_Type']}.png"
+        filename = f"{result['Experiment_ID']}_Pulse_{result['Pulse_Number']:02d}_{result['Pulse_Type']}_{result['Fit_Type']}.png"
         filepath = plot_dir / filename
         plt.savefig(filepath, dpi=300, bbox_inches='tight')
         plt.close()
@@ -579,11 +807,20 @@ def process_single_file(file_path, pulse_length=91, plot_dir=None, create_plots=
         # Determine if this is an odd or even pulse (1-indexed)
         pulse_type = 'Odd' if (pulse_num + 1) % 2 == 1 else 'Even'
         
-        # Fit the pulse
-        result = fit_single_pulse(x_pulse, y_pulse, pulse_num + 1, pulse_type, experiment_id)
-        results.append(result)
+        # Fit the full pulse
+        result_full = fit_single_pulse(x_pulse, y_pulse, pulse_num + 1, pulse_type, experiment_id, "full")
+        results.append(result_full)
         
-        print(f"  Pulse {pulse_num + 1} ({pulse_type}): R² = {result['R_Squared']:.4f}")
+        # Fit only the first 9 data points
+        if len(x_pulse) >= 9:
+            x_pulse_first9 = x_pulse[:9]
+            y_pulse_first9 = y_pulse[:9]
+            result_first9 = fit_single_pulse(x_pulse_first9, y_pulse_first9, pulse_num + 1, pulse_type, experiment_id, "first9")
+            results.append(result_first9)
+            
+            print(f"  Pulse {pulse_num + 1} ({pulse_type}): Full R² = {result_full['R_Squared']:.4f}, First9 R² = {result_first9['R_Squared']:.4f}")
+        else:
+            print(f"  Pulse {pulse_num + 1} ({pulse_type}): Full R² = {result_full['R_Squared']:.4f} (insufficient data for first9 fit)")
     
     # Create plots if requested
     if create_plots and plot_dir is not None:
@@ -591,14 +828,30 @@ def process_single_file(file_path, pulse_length=91, plot_dir=None, create_plots=
         individual_plot_dir = plot_dir / "individual_pulses"
         individual_plot_dir.mkdir(exist_ok=True)
         
+        # Comparison plots directory
+        comparison_plot_dir = plot_dir / "pulse_comparisons"
+        comparison_plot_dir.mkdir(exist_ok=True)
+        
+        # Plot individual pulses and comparisons
+        full_results = [r for r in results if r['Fit_Type'] == 'full']
+        first9_results = [r for r in results if r['Fit_Type'] == 'first9']
+        
         for result in results:
             plot_individual_pulse(result, individual_plot_dir)
+        
+        # Create comparison plots (full vs first9)
+        for full_result in full_results:
+            # Find matching first9 result
+            matching_first9 = [r for r in first9_results 
+                             if r['Pulse_Number'] == full_result['Pulse_Number']]
+            if matching_first9:
+                plot_pulse_comparison(full_result, matching_first9[0], comparison_plot_dir)
         
         # Experiment summary plot
         experiment_plot_dir = plot_dir / "experiment_summaries"
         experiment_plot_dir.mkdir(exist_ok=True)
         
-        plot_experiment_summary(results, experiment_plot_dir)
+        plot_experiment_summary(full_results, experiment_plot_dir)  # Only use full results for summary
     
     return results
 
@@ -699,6 +952,7 @@ def process_files_with_config():
     if CREATE_PLOTS and plot_dir is not None:
         print("Creating parameter comparison plots...")
         plot_parameter_comparison(all_results, plot_dir)
+        plot_parameter_comparison_extended(all_results, plot_dir)
     
     # Remove plotting data from results before saving to Excel
     results_for_excel = []
@@ -707,120 +961,172 @@ def process_files_with_config():
                        if k not in ['x_data', 'y_data', 'fit_params']}
         results_for_excel.append(excel_result)
     
-    # Create DataFrame
+    # Create DataFrame with separate sheets for full and first9 fits
     df = pd.DataFrame(results_for_excel)
     
+    # Separate full and first9 fits
+    df_full = df[df['Fit_Type'] == 'full'].copy()
+    df_first9 = df[df['Fit_Type'] == 'first9'].copy()
+    
     # Sort by experiment ID, then pulse number
-    df = df.sort_values(['Experiment_ID', 'Pulse_Number'])
+    df_full = df_full.sort_values(['Experiment_ID', 'Pulse_Number'])
+    df_first9 = df_first9.sort_values(['Experiment_ID', 'Pulse_Number'])
     
-    # Create summary statistics
-    summary_stats = []
-    
-    # Overall statistics
-    successful_fits = df[df['Fit_Success'] == True]
-    summary_stats.append({
-        'Category': 'Overall',
-        'Subcategory': 'All Pulses',
-        'Count': len(df),
-        'Successful_Fits': len(successful_fits),
-        'Success_Rate': len(successful_fits) / len(df) if len(df) > 0 else 0,
-        'Avg_R_Squared': successful_fits['R_Squared'].mean() if len(successful_fits) > 0 else np.nan,
-        'Avg_Parameter_b': successful_fits['Parameter_b'].mean() if len(successful_fits) > 0 else np.nan,
-        'Std_Parameter_b': successful_fits['Parameter_b'].std() if len(successful_fits) > 0 else np.nan
-    })
-    
-    # Statistics by pulse type
-    for pulse_type in ['Odd', 'Even']:
-        type_data = successful_fits[successful_fits['Pulse_Type'] == pulse_type]
+    # Create summary statistics for both fit types
+    def create_summary_stats(data_df, fit_type_name):
+        summary_stats = []
+        
+        # Overall statistics
+        successful_fits = data_df[data_df['Fit_Success'] == True]
         summary_stats.append({
-            'Category': 'By_Pulse_Type',
-            'Subcategory': pulse_type,
-            'Count': len(df[df['Pulse_Type'] == pulse_type]),
-            'Successful_Fits': len(type_data),
-            'Success_Rate': len(type_data) / len(df[df['Pulse_Type'] == pulse_type]) if len(df[df['Pulse_Type'] == pulse_type]) > 0 else 0,
-            'Avg_R_Squared': type_data['R_Squared'].mean() if len(type_data) > 0 else np.nan,
-            'Avg_Parameter_b': type_data['Parameter_b'].mean() if len(type_data) > 0 else np.nan,
-            'Std_Parameter_b': type_data['Parameter_b'].std() if len(type_data) > 0 else np.nan
+            'Category': f'{fit_type_name}_Overall',
+            'Subcategory': 'All Pulses',
+            'Count': len(data_df),
+            'Successful_Fits': len(successful_fits),
+            'Success_Rate': len(successful_fits) / len(data_df) if len(data_df) > 0 else 0,
+            'Avg_R_Squared': successful_fits['R_Squared'].mean() if len(successful_fits) > 0 else np.nan,
+            'Avg_Parameter_b': successful_fits['Parameter_b'].mean() if len(successful_fits) > 0 else np.nan,
+            'Std_Parameter_b': successful_fits['Parameter_b'].std() if len(successful_fits) > 0 else np.nan
         })
+        
+        # Statistics by pulse type
+        for pulse_type in ['Odd', 'Even']:
+            type_data = successful_fits[successful_fits['Pulse_Type'] == pulse_type]
+            summary_stats.append({
+                'Category': f'{fit_type_name}_By_Pulse_Type',
+                'Subcategory': pulse_type,
+                'Count': len(data_df[data_df['Pulse_Type'] == pulse_type]),
+                'Successful_Fits': len(type_data),
+                'Success_Rate': len(type_data) / len(data_df[data_df['Pulse_Type'] == pulse_type]) if len(data_df[data_df['Pulse_Type'] == pulse_type]) > 0 else 0,
+                'Avg_R_Squared': type_data['R_Squared'].mean() if len(type_data) > 0 else np.nan,
+                'Avg_Parameter_b': type_data['Parameter_b'].mean() if len(type_data) > 0 else np.nan,
+                'Std_Parameter_b': type_data['Parameter_b'].std() if len(type_data) > 0 else np.nan
+            })
+        
+        # Statistics by experiment
+        for experiment_id in data_df['Experiment_ID'].unique():
+            experiment_data = successful_fits[successful_fits['Experiment_ID'] == experiment_id]
+            summary_stats.append({
+                'Category': f'{fit_type_name}_By_Experiment',
+                'Subcategory': experiment_id,
+                'Count': len(data_df[data_df['Experiment_ID'] == experiment_id]),
+                'Successful_Fits': len(experiment_data),
+                'Success_Rate': len(experiment_data) / len(data_df[data_df['Experiment_ID'] == experiment_id]) if len(data_df[data_df['Experiment_ID'] == experiment_id]) > 0 else 0,
+                'Avg_R_Squared': experiment_data['R_Squared'].mean() if len(experiment_data) > 0 else np.nan,
+                'Avg_Parameter_b': experiment_data['Parameter_b'].mean() if len(experiment_data) > 0 else np.nan,
+                'Std_Parameter_b': experiment_data['Parameter_b'].std() if len(experiment_data) > 0 else np.nan
+            })
+        
+        return summary_stats
     
-    # Statistics by experiment
-    for experiment_id in df['Experiment_ID'].unique():
-        experiment_data = successful_fits[successful_fits['Experiment_ID'] == experiment_id]
-        summary_stats.append({
-            'Category': 'By_Experiment',
-            'Subcategory': experiment_id,
-            'Count': len(df[df['Experiment_ID'] == experiment_id]),
-            'Successful_Fits': len(experiment_data),
-            'Success_Rate': len(experiment_data) / len(df[df['Experiment_ID'] == experiment_id]) if len(df[df['Experiment_ID'] == experiment_id]) > 0 else 0,
-            'Avg_R_Squared': experiment_data['R_Squared'].mean() if len(experiment_data) > 0 else np.nan,
-            'Avg_Parameter_b': experiment_data['Parameter_b'].mean() if len(experiment_data) > 0 else np.nan,
-            'Std_Parameter_b': experiment_data['Parameter_b'].std() if len(experiment_data) > 0 else np.nan
-        })
+    # Create summary statistics for both fit types
+    summary_stats_full = create_summary_stats(df_full, "Full_Pulse")
+    summary_stats_first9 = create_summary_stats(df_first9, "First9_Points")
     
-    summary_df = pd.DataFrame(summary_stats)
+    # Combine summary statistics
+    all_summary_stats = summary_stats_full + summary_stats_first9
+    summary_df = pd.DataFrame(all_summary_stats)
+    
+    # Create comparison summary between full and first9 fits
+    comparison_data = []
+    for experiment_id in df_full['Experiment_ID'].unique():
+        full_exp = df_full[df_full['Experiment_ID'] == experiment_id]
+        first9_exp = df_first9[df_first9['Experiment_ID'] == experiment_id]
+        
+        for pulse_type in ['Odd', 'Even']:
+            full_type = full_exp[full_exp['Pulse_Type'] == pulse_type]
+            first9_type = first9_exp[first9_exp['Pulse_Type'] == pulse_type]
+            
+            comparison_data.append({
+                'Experiment_ID': experiment_id,
+                'Pulse_Type': pulse_type,
+                'Full_Count': len(full_type),
+                'First9_Count': len(first9_type),
+                'Full_Avg_R_Squared': full_type['R_Squared'].mean() if len(full_type) > 0 else np.nan,
+                'First9_Avg_R_Squared': first9_type['R_Squared'].mean() if len(first9_type) > 0 else np.nan,
+                'Full_Avg_Parameter_b': full_type['Parameter_b'].mean() if len(full_type) > 0 else np.nan,
+                'First9_Avg_Parameter_b': first9_type['Parameter_b'].mean() if len(first9_type) > 0 else np.nan,
+                'Full_Std_Parameter_b': full_type['Parameter_b'].std() if len(full_type) > 0 else np.nan,
+                'First9_Std_Parameter_b': first9_type['Parameter_b'].std() if len(first9_type) > 0 else np.nan,
+            })
+    
+    comparison_df = pd.DataFrame(comparison_data)
     
     # Save to Excel with multiple sheets
     output_path = Path(OUTPUT_FILE)
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        # Main results
-        df.to_excel(writer, sheet_name='Individual_Pulse_Fits', index=False)
+        # Main results - Full pulse fits
+        df_full.to_excel(writer, sheet_name='Full_Pulse_Fits', index=False)
         
-        # Summary statistics
+        # First 9 points fits
+        if len(df_first9) > 0:
+            df_first9.to_excel(writer, sheet_name='First9_Points_Fits', index=False)
+        
+        # Combined summary statistics
         summary_df.to_excel(writer, sheet_name='Summary_Statistics', index=False)
         
-        # Separate sheets for odd and even pulses
-        odd_pulses = df[df['Pulse_Type'] == 'Odd']
-        even_pulses = df[df['Pulse_Type'] == 'Even']
+        # Comparison between full and first9
+        if len(comparison_df) > 0:
+            comparison_df.to_excel(writer, sheet_name='Full_vs_First9_Comparison', index=False)
         
-        if len(odd_pulses) > 0:
-            odd_pulses.to_excel(writer, sheet_name='Odd_Pulses_Only', index=False)
+        # Separate sheets for odd and even pulses (full fits)
+        odd_pulses_full = df_full[df_full['Pulse_Type'] == 'Odd']
+        even_pulses_full = df_full[df_full['Pulse_Type'] == 'Even']
         
-        if len(even_pulses) > 0:
-            even_pulses.to_excel(writer, sheet_name='Even_Pulses_Only', index=False)
+        if len(odd_pulses_full) > 0:
+            odd_pulses_full.to_excel(writer, sheet_name='Full_Odd_Pulses_Only', index=False)
         
-        # Parameter comparison sheet
-        if len(successful_fits) > 0:
-            comparison_data = []
-            for experiment_id in df['Experiment_ID'].unique():
-                experiment_data = successful_fits[successful_fits['Experiment_ID'] == experiment_id]
-                odd_data = experiment_data[experiment_data['Pulse_Type'] == 'Odd']
-                even_data = experiment_data[experiment_data['Pulse_Type'] == 'Even']
-                
-                comparison_data.append({
-                    'Experiment_ID': experiment_id,
-                    'Odd_Pulses_Count': len(odd_data),
-                    'Even_Pulses_Count': len(even_data),
-                    'Odd_Avg_R_Squared': odd_data['R_Squared'].mean() if len(odd_data) > 0 else np.nan,
-                    'Even_Avg_R_Squared': even_data['R_Squared'].mean() if len(even_data) > 0 else np.nan,
-                    'Odd_Avg_Parameter_b': odd_data['Parameter_b'].mean() if len(odd_data) > 0 else np.nan,
-                    'Even_Avg_Parameter_b': even_data['Parameter_b'].mean() if len(even_data) > 0 else np.nan,
-                    'Odd_Std_Parameter_b': odd_data['Parameter_b'].std() if len(odd_data) > 0 else np.nan,
-                    'Even_Std_Parameter_b': even_data['Parameter_b'].std() if len(even_data) > 0 else np.nan,
-                })
+        if len(even_pulses_full) > 0:
+            even_pulses_full.to_excel(writer, sheet_name='Full_Even_Pulses_Only', index=False)
+        
+        # Separate sheets for odd and even pulses (first9 fits)
+        if len(df_first9) > 0:
+            odd_pulses_first9 = df_first9[df_first9['Pulse_Type'] == 'Odd']
+            even_pulses_first9 = df_first9[df_first9['Pulse_Type'] == 'Even']
             
-            comparison_df = pd.DataFrame(comparison_data)
-            comparison_df.to_excel(writer, sheet_name='Experiment_Comparison', index=False)
+            if len(odd_pulses_first9) > 0:
+                odd_pulses_first9.to_excel(writer, sheet_name='First9_Odd_Pulses_Only', index=False)
+            
+            if len(even_pulses_first9) > 0:
+                even_pulses_first9.to_excel(writer, sheet_name='First9_Even_Pulses_Only', index=False)
+    
+    # Calculate statistics for reporting
+    total_pulses = len(df_full)
+    total_first9_fits = len(df_first9)
+    successful_full_fits = len(df_full[df_full['Fit_Success'] == True])
+    successful_first9_fits = len(df_first9[df_first9['Fit_Success'] == True])
     
     print(f"\nProcessing complete!")
-    print(f"Processed {len(df)} total pulses from {len(df['Experiment_ID'].unique())} experiments")
-    print(f"Successful fits: {len(successful_fits)}/{len(df)} ({len(successful_fits)/len(df)*100:.1f}%)")
+    print(f"Processed {total_pulses} total pulses from {len(df_full['Experiment_ID'].unique())} experiments")
+    print(f"Full pulse fits: {successful_full_fits}/{total_pulses} ({successful_full_fits/total_pulses*100:.1f}%)")
+    if total_first9_fits > 0:
+        print(f"First 9 points fits: {successful_first9_fits}/{total_first9_fits} ({successful_first9_fits/total_first9_fits*100:.1f}%)")
     print(f"Results saved to: {output_path}")
     
     if CREATE_PLOTS:
         print(f"\nPlots saved to:")
         print(f"  Individual pulses: {plot_dir / 'individual_pulses'}")
+        print(f"  Pulse comparisons: {plot_dir / 'pulse_comparisons'}")
         print(f"  Experiment summaries: {plot_dir / 'experiment_summaries'}")
         print(f"  Parameter comparisons: {plot_dir / 'Parameter_Comparison_Summary.png'}")
+        print(f"  Extended comparisons: {plot_dir / 'Parameter_Comparison_Extended.png'}")
     
-    # Print summary by pulse type
-    if len(successful_fits) > 0:
-        print(f"\nSummary by pulse type:")
+    # Print summary by pulse type for both fit types
+    if successful_full_fits > 0:
+        print(f"\nFull Pulse Summary by pulse type:")
         for pulse_type in ['Odd', 'Even']:
-            type_data = successful_fits[successful_fits['Pulse_Type'] == pulse_type]
+            type_data = df_full[(df_full['Pulse_Type'] == pulse_type) & (df_full['Fit_Success'] == True)]
             if len(type_data) > 0:
-                print(f"{pulse_type} pulses: {len(type_data)} fits, avg R² = {type_data['R_Squared'].mean():.4f}, avg b = {type_data['Parameter_b'].mean():.6f}")
+                print(f"  {pulse_type} pulses: {len(type_data)} fits, avg R² = {type_data['R_Squared'].mean():.4f}, avg b = {type_data['Parameter_b'].mean():.6f}")
     
-    return df, summary_df
+    if successful_first9_fits > 0:
+        print(f"\nFirst 9 Points Summary by pulse type:")
+        for pulse_type in ['Odd', 'Even']:
+            type_data = df_first9[(df_first9['Pulse_Type'] == pulse_type) & (df_first9['Fit_Success'] == True)]
+            if len(type_data) > 0:
+                print(f"  {pulse_type} pulses: {len(type_data)} fits, avg R² = {type_data['R_Squared'].mean():.4f}, avg b = {type_data['Parameter_b'].mean():.6f}")
+    
+    return df_full, df_first9, summary_df
 
 if __name__ == "__main__":
     # Run the analysis with the configured settings
