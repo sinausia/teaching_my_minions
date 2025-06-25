@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
 import warnings
+from scipy.signal import savgol_filter
 from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -19,207 +20,104 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 def exp_func(x, a, b, c):
     return a * np.exp(b * x) + c
 
-def perform_fitting_attempt(x_clean, y_clean, verbose=False):
-    """
-    Perform curve fitting with a wide range of smart initial guesses
-    Returns best fit result (popt, pcov, r_squared) or None
-    """
-    if len(x_clean) < 3 or len(y_clean) < 3:
-        return None  # Not enough points to fit
+def perform_fitting_attempt(x_data, y_data, max_attempts=3):
+    best_fit = None
+    best_r2 = -np.inf
 
-    y_start = y_clean[0]
-    y_end = y_clean[-1]
-    c_guess = np.min(y_clean)
-    a_guess = y_start - c_guess if abs(y_start - c_guess) > 1e-10 else np.max(y_clean) - c_guess
-    x_range = x_clean[-1] - x_clean[0] if x_clean[-1] != x_clean[0] else 1
-
-    # Directionality for b_guess
-    b_sign = 1 if y_end > y_start else -1
-
-    # Generate a range of initial guesses with varying curvature strengths
-    b_mags = [0.001, 0.01, 0.1, 0.5, 1.0]
-    initial_guesses = []
-    for b_mag in b_mags:
-        b_val = b_sign * b_mag
-        initial_guesses.append([a_guess, b_val, c_guess])
-        initial_guesses.append([a_guess, -b_val, np.mean(y_clean)])
-
-    # Add additional guesses around the mean and std
-    initial_guesses.extend([
-        [np.std(y_clean), -0.01, np.mean(y_clean)],
-        [np.max(y_clean) - np.min(y_clean), -0.05, np.min(y_clean)],
-        [1.0, -0.001, np.mean(y_clean)],
-        [0.1, -0.0001, np.mean(y_clean)]
-    ])
-
-    best_result = None
-    best_r_squared = -np.inf
-
-    #bounds = ([-np.inf, -50, -np.inf], [np.inf, 50, np.inf]) #No constrained a
-    bounds = ([1e-10, -50, -np.inf], [np.inf, 50, np.inf]) #For constrained a to be positive
-
-
-    for i, p0 in enumerate(initial_guesses):
+    # Try smoothing if data is long enough
+    if len(y_data) >= 5:
         try:
-            popt, pcov = curve_fit(
-                exp_func, x_clean, y_clean,
-                p0=p0,
-                bounds=bounds,
-                maxfev=10000
-            )
+            y_data = savgol_filter(y_data, window_length=5, polyorder=2)
+        except:
+            pass
 
-            y_fit = exp_func(x_clean, *popt)
-            residuals = y_clean - y_fit
-            ss_res = np.sum(residuals**2)
-            ss_tot = np.sum((y_clean - np.mean(y_clean))**2)
-            r_squared = 1.0 if ss_tot == 0 else 1 - (ss_res / ss_tot)
+    for _ in range(max_attempts):
+        guesses = [
+            (max(y_data) - min(y_data), -0.1, min(y_data)),
+            (1.0, -0.01, 0.0),
+            (1.0, 0.01, 0.0)
+        ]
+        bounds = ([0, -50, -np.inf], [np.inf, 50, np.inf])  # a > 0
 
-            if verbose:
-                print(f"Try {i}: a={popt[0]:.4g}, b={popt[1]:.4g}, c={popt[2]:.4g}, R²={r_squared:.4g}")
+        for guess in guesses:
+            try:
+                popt, pcov = curve_fit(exp_func, x_data, y_data, p0=guess, bounds=bounds, maxfev=10000)
+                y_fit = exp_func(x_data, *popt)
+                residuals = y_data - y_fit
+                ss_res = np.sum(residuals ** 2)
+                ss_tot = np.sum((y_data - np.mean(y_data)) ** 2)
+                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 1.0
 
-            if r_squared > best_r_squared:
-                best_r_squared = r_squared
-                best_result = (popt, pcov, r_squared)
+                if abs(popt[1]) > 20 and r_squared < 0.5:
+                    continue
 
-        except Exception as e:
-            if verbose:
-                print(f"Try {i} failed: {e}")
-            continue
+                if r_squared > best_r2:
+                    best_fit = (popt, pcov, r_squared)
+                    best_r2 = r_squared
+            except:
+                continue
 
-    return best_result
+    return best_fit
+
 
 def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, fit_type="full"):
-    """
-    Improved fit function with y-inversion when parameter 'a' is negative
-    """
     try:
-        # Data validation
-        if len(x_pulse) < 3:
-            raise ValueError("Insufficient data points for fitting")
-        
-        if len(x_pulse) != len(y_pulse):
-            raise ValueError("x and y data have different lengths")
-        
-        # Remove any NaN or infinite values
+        if len(x_pulse) < 3 or len(x_pulse) != len(y_pulse):
+            raise ValueError("Insufficient or mismatched data lengths")
+
         valid_mask = np.isfinite(x_pulse) & np.isfinite(y_pulse)
-        if not np.any(valid_mask):
-            raise ValueError("No valid data points")
-        
         x_clean = x_pulse[valid_mask]
         y_clean = y_pulse[valid_mask]
-        
+
         if len(x_clean) < 3:
-            raise ValueError("Insufficient valid data points after cleaning")
-        
-        # Handle constant data by forcing a tiny slope
+            raise ValueError("Insufficient valid data")
+
         if np.std(y_clean) < 1e-10:
-            # For constant data, create a tiny artificial trend
             y_clean = y_clean + np.linspace(0, 1e-12, len(y_clean))
-        
-        # Store original y data for potential inversion
+
         y_original = y_clean.copy()
         data_was_inverted = False
-        
-        # STEP 1: Initial fit to check if 'a' is negative
+
+        # Initial fit
         best_result_initial = perform_fitting_attempt(x_clean, y_clean)
-        
-        # STEP 2: Check signal direction and invert if trend is upward
-        if best_result_initial is not None:
-            # Analyze the data trend from beginning to end
-            window_size = max(3, len(y_clean) // 10)
-            start_mean = np.mean(y_clean[:window_size])
-            end_mean = np.mean(y_clean[-window_size:])
-        
+
+        # Invert if trend is upward
+        best_result = best_result_initial
+        if best_result_initial:
+            start_mean = np.mean(y_clean[:max(3, len(y_clean) // 10)])
+            end_mean = np.mean(y_clean[-max(3, len(y_clean) // 10):])
+
             if end_mean > start_mean:
-                print(f"  Detected upward trend (start mean = {start_mean:.6g}, end mean = {end_mean:.6g}), inverting y for proper exponential fit...")
                 y_clean = -y_clean
                 data_was_inverted = True
-        
-                # Refit with inverted data
                 best_result = perform_fitting_attempt(x_clean, y_clean)
-        
-                # Fallback if refitting fails
                 if best_result is None:
-                    print("  Refitting with inverted data failed, using original fit")
                     y_clean = y_original
                     data_was_inverted = False
                     best_result = best_result_initial
-                else:
-                    print(f"  Refitting successful with inverted data")
-            else:
-                # Trend is downward or flat, use original fit
-                best_result = best_result_initial
-        else:
-            # Initial fitting failed completely
-            best_result = None
 
-        
-        # If all attempts failed, force a fit with linear approximation
         if best_result is None:
-            try:
-                # Last resort: fit a nearly-flat exponential
-                mean_y = np.mean(y_clean)
-                # Force fit with b very close to zero
-                popt = [0.0, 1e-10, mean_y]  # Essentially y = c (constant)
-                
-                # Create fake covariance matrix
-                pcov = np.eye(3) * 1e-6
-                
-                # Calculate "R-squared" for constant fit
-                y_fit = exp_func(x_clean, *popt)
-                residuals = y_clean - y_fit
-                ss_res = np.sum(residuals**2)
-                ss_tot = np.sum((y_clean - np.mean(y_clean))**2)
-                
-                if ss_tot == 0:
-                    r_squared = 1.0  # Perfect fit for constant data
-                else:
-                    r_squared = 1 - (ss_res / ss_tot)
-                
-                best_result = (popt, pcov, r_squared)
-                
-            except:
-                # Absolute last resort
-                popt = [0.0, 0.0, np.mean(y_clean) if len(y_clean) > 0 else 0.0]
-                pcov = None
-                r_squared = 0.0
-                best_result = (popt, pcov, r_squared)
-        
-        popt, pcov, r_squared = best_result
-        a, b, c = popt
-        
-        # Calculate parameter uncertainties
-        if pcov is not None:
-            param_errors = np.sqrt(np.diag(pcov))
+            popt = [0.0, 0.0, np.mean(y_clean)]
+            pcov = None
+            r_squared = 1.0 if np.std(y_clean) < 1e-10 else 0.0
         else:
-            param_errors = [np.nan, np.nan, np.nan]
-        
-        # Less strict validation - allow any parameter values
+            popt, pcov, r_squared = best_result
+
+        a, b, c = popt
+        param_errors = np.sqrt(np.diag(pcov)) if pcov is not None else [np.nan, np.nan, np.nan]
+
         fit_warnings = []
-        
-        # Add warning about data inversion
         if data_was_inverted:
-            fit_warnings.append("Y data was inverted due to negative 'a' parameter")
-        
-        # Only warn for extreme values, don't fail
+            fit_warnings.append("Y data was inverted due to upward trend")
         if abs(b) > 10:
-            fit_warnings.append("Very extreme decay/growth rate")
-        elif abs(b) < 1e-6:
-            fit_warnings.append("Nearly constant (very small b parameter)")
-        
+            fit_warnings.append("Very large |b| value")
+        if abs(b) < 1e-6:
+            fit_warnings.append("Very small b value (flat response)")
         if r_squared < 0.1:
-            fit_warnings.append("Very poor fit quality")
+            fit_warnings.append("Very poor fit")
         elif r_squared < 0.5:
-            fit_warnings.append("Poor fit quality")
-        
-        # Check for numerical issues but don't fail the fit
-        try:
-            y_fit_full = exp_func(x_clean, a, b, c)
-            if not np.all(np.isfinite(y_fit_full)):
-                fit_warnings.append("Numerical overflow in fitted curve")
-        except:
-            fit_warnings.append("Could not evaluate fitted curve")
-        
+            fit_warnings.append("Low fit quality")
+
         return {
             'Experiment_ID': experiment_id,
             'Pulse_Number': pulse_number,
@@ -229,7 +127,7 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
             'Parameter_b': b,
             'Parameter_c': c,
             'Parameter_a_Error': param_errors[0],
-            'Parameter_b_Error': param_errors[1], 
+            'Parameter_b_Error': param_errors[1],
             'Parameter_c_Error': param_errors[2],
             'R_Squared': r_squared,
             'Equation': f"{a:.6f} * exp({b:.6f} * x) + {c:.6f}",
@@ -239,49 +137,14 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
             'End_Index': x_pulse[-1] if len(x_pulse) > 0 else np.nan,
             'Fit_Success': True,
             'Fit_Warnings': '; '.join(fit_warnings) if fit_warnings else 'None',
-            'Data_Inverted': data_was_inverted,  # New field to track inversion
-            # Store data for plotting (use final fitted data)
+            'Data_Inverted': data_was_inverted,
             'x_data': x_clean,
-            'y_data': y_clean,  # This will be inverted if inversion occurred
-            'y_data_original': y_original,  # Always store original data
+            'y_data': y_clean,
+            'y_data_original': y_original,
             'fit_params': popt
         }
-        
+
     except Exception as e:
-        # Even in the exception handler, try to force a basic fit
-        try:
-            # Ultimate fallback: constant fit
-            if 'y_pulse' in locals() and len(y_pulse) > 0:
-                mean_val = np.mean(y_pulse[np.isfinite(y_pulse)])
-                return {
-                    'Experiment_ID': experiment_id,
-                    'Pulse_Number': pulse_number,
-                    'Pulse_Type': pulse_type,
-                    'Fit_Type': fit_type,
-                    'Parameter_a': 0.0,
-                    'Parameter_b': 0.0,
-                    'Parameter_c': mean_val,
-                    'Parameter_a_Error': np.nan,
-                    'Parameter_b_Error': np.nan,
-                    'Parameter_c_Error': np.nan,
-                    'R_Squared': 1.0 if np.std(y_pulse[np.isfinite(y_pulse)]) < 1e-10 else 0.0,
-                    'Equation': f"0.0 * exp(0.0 * x) + {mean_val:.6f}",
-                    'Data_Points': len(y_pulse),
-                    'Original_Data_Points': len(y_pulse),
-                    'Start_Index': x_pulse[0] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
-                    'End_Index': x_pulse[-1] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
-                    'Fit_Success': True,
-                    'Fit_Warnings': f'Forced constant fit due to error: {str(e)}',
-                    'Data_Inverted': False,
-                    'x_data': x_pulse if 'x_pulse' in locals() else np.array([]),
-                    'y_data': y_pulse if 'y_pulse' in locals() else np.array([]),
-                    'y_data_original': y_pulse if 'y_pulse' in locals() else np.array([]),
-                    'fit_params': [0.0, 0.0, mean_val]
-                }
-        except:
-            pass
-        
-        # Absolute last resort if everything fails
         return {
             'Experiment_ID': experiment_id,
             'Pulse_Number': pulse_number,
@@ -295,12 +158,12 @@ def fit_single_pulse(x_pulse, y_pulse, pulse_number, pulse_type, experiment_id, 
             'Parameter_c_Error': np.nan,
             'R_Squared': 0.0,
             'Equation': '0.0 * exp(0.0 * x) + 0.0',
-            'Data_Points': len(y_pulse) if 'y_pulse' in locals() else 0,
-            'Original_Data_Points': len(y_pulse) if 'y_pulse' in locals() else 0,
-            'Start_Index': x_pulse[0] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
-            'End_Index': x_pulse[-1] if 'x_pulse' in locals() and len(x_pulse) > 0 else np.nan,
-            'Fit_Success': True,
-            'Fit_Warnings': f'Emergency fallback fit: {str(e)}',
+            'Data_Points': len(y_pulse) if y_pulse is not None else 0,
+            'Original_Data_Points': len(y_pulse) if y_pulse is not None else 0,
+            'Start_Index': x_pulse[0] if x_pulse is not None and len(x_pulse) > 0 else np.nan,
+            'End_Index': x_pulse[-1] if x_pulse is not None and len(x_pulse) > 0 else np.nan,
+            'Fit_Success': False,
+            'Fit_Warnings': f'Error: {str(e)}',
             'Data_Inverted': False,
             'x_data': np.array([]),
             'y_data': np.array([]),
@@ -917,60 +780,78 @@ def get_experiment_identifier(file_path):
 
 def load_data_file(file_path):
     """
-    Load data from various file formats (txt, csv, etc.)
+    Load data from various file formats (txt, csv, etc.) with multiple encoding support
     Returns x, y arrays or None if loading fails
     """
-    try:
-        # Try to load with pandas first
-        if file_path.suffix.lower() in ['.csv']:
-            data = pd.read_csv(file_path)
-        else:
-            data = pd.read_csv(file_path, sep=None, engine='python')
-        
-        # Assume second column contains the y data
-        if data.shape[1] < 2:
-            print(f"Warning: {file_path} has less than 2 columns")
-            return None, None
-            
-        x = np.arange(len(data.iloc[:, 1]))
-        y = data.iloc[:, 1].values
-        return x, y
-        
-    except:
-        # Try numpy loadtxt
+    # Try different encodings
+    encodings_to_try = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'utf-16']
+    
+    for encoding in encodings_to_try:
         try:
-            data = np.loadtxt(file_path)
-            if data.ndim == 1:
-                x = np.arange(len(data))
-                y = data
+            # Try to load with pandas first
+            if file_path.suffix.lower() in ['.csv']:
+                data = pd.read_csv(file_path, encoding=encoding)
             else:
-                x = np.arange(len(data[:, 1]))
-                y = data[:, 1]
+                data = pd.read_csv(file_path, sep=None, engine='python', encoding=encoding)
+            
+            # Assume second column contains the y data
+            if data.shape[1] < 2:
+                print(f"Warning: {file_path} has less than 2 columns")
+                return None, None
+                
+            x = np.arange(len(data.iloc[:, 1]))
+            y = data.iloc[:, 1].values
+            print(f"Successfully loaded {file_path} with encoding: {encoding}")
             return x, y
-        except:
-            # Last resort: read as text and parse
-            try:
-                with open(file_path, 'r') as f:
-                    lines = f.readlines()
-                data = []
-                for line in lines:
+            
+        except Exception as e:
+            if encoding == encodings_to_try[-1]:  # Last encoding to try
+                # Try numpy loadtxt as fallback
+                for fallback_encoding in encodings_to_try:
                     try:
-                        values = line.strip().split()
-                        if len(values) > 1:
-                            data.append(float(values[1]))
+                        # For numpy loadtxt, we need to handle encoding differently
+                        with open(file_path, 'r', encoding=fallback_encoding) as f:
+                            data = np.loadtxt(f)
+                        if data.ndim == 1:
+                            x = np.arange(len(data))
+                            y = data
+                        else:
+                            x = np.arange(len(data[:, 1]))
+                            y = data[:, 1]
+                        print(f"Successfully loaded {file_path} with numpy and encoding: {fallback_encoding}")
+                        return x, y
                     except:
                         continue
                 
-                if len(data) == 0:
-                    return None, None
-                    
-                x = np.arange(len(data))
-                y = np.array(data)
-                return x, y
-            except:
-                print(f"Error: Could not load data from {file_path}")
+                # Last resort: read as text and parse with different encodings
+                for text_encoding in encodings_to_try:
+                    try:
+                        with open(file_path, 'r', encoding=text_encoding) as f:
+                            lines = f.readlines()
+                        data = []
+                        for line in lines:
+                            try:
+                                values = line.strip().split()
+                                if len(values) > 1:
+                                    data.append(float(values[1]))
+                            except:
+                                continue
+                        
+                        if len(data) == 0:
+                            continue
+                            
+                        x = np.arange(len(data))
+                        y = np.array(data)
+                        print(f"Successfully loaded {file_path} with text parsing and encoding: {text_encoding}")
+                        return x, y
+                    except:
+                        continue
+                
+                # If all methods failed
+                print(f"Error: Could not load data from {file_path} with any encoding method")
                 return None, None
-
+            else:
+                continue  # Try next encoding
 def process_single_file(file_path, pulse_length=91, plot_dir=None, create_plots=True):
     """
     Process a single file and return list of fit results for all pulses
